@@ -17,7 +17,10 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -48,11 +51,23 @@ type Config struct {
 	// RoundTripper is used by the Client to drive HTTP requests. If not
 	// provided, DefaultRoundTripper will be used.
 	RoundTripper http.RoundTripper
+
+	TLSConfig *tls.Config
+
+	CertFile string
+	KeyFile  string
+	CAFile   string
 }
 
 func (cfg *Config) roundTripper() http.RoundTripper {
 	if cfg.RoundTripper == nil {
-		return DefaultRoundTripper
+		if cfg.TLSConfig != nil {
+			r := DefaultRoundTripper.(*http.Transport)
+			r.TLSClientConfig = cfg.TLSConfig
+			return r
+		} else {
+			return DefaultRoundTripper
+		}
 	}
 	return cfg.RoundTripper
 }
@@ -91,6 +106,35 @@ func NewClient(cfg Config) (Client, error) {
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
+	}
+
+	if cfg.TLSConfig == nil {
+		if cfg.CertFile != "" || cfg.CAFile != "" {
+			cfg.TLSConfig = &tls.Config{}
+		}
+
+		if cfg.CertFile != "" {
+			// Load client cert
+			cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+			if err != nil {
+				return nil, err
+			}
+			cfg.TLSConfig.Certificates = []tls.Certificate{cert}
+		}
+		if cfg.CAFile != "" {
+
+			// Load CA cert
+			caCert, err := ioutil.ReadFile(cfg.CAFile)
+			if err != nil {
+				return nil, err
+			}
+			caCertPool := x509.NewCertPool()
+			caCertPool.AppendCertsFromPEM(caCert)
+
+			// Setup HTTPS client
+			cfg.TLSConfig.RootCAs = caCertPool
+			cfg.TLSConfig.BuildNameToCertificate()
+		}
 	}
 
 	return &httpClient{
