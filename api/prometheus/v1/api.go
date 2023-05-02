@@ -362,6 +362,7 @@ const (
 
 	epAlerts          = apiPrefix + "/alerts"
 	epAlertManagers   = apiPrefix + "/alertmanagers"
+	epFederate        = apiPrefix + "/federate"
 	epQuery           = apiPrefix + "/query"
 	epQueryRange      = apiPrefix + "/query_range"
 	epQueryExemplars  = apiPrefix + "/query_exemplars"
@@ -472,6 +473,8 @@ type API interface {
 	Config(ctx context.Context) (ConfigResult, error)
 	// DeleteSeries deletes data for a selection of series in a time range.
 	DeleteSeries(ctx context.Context, matches []string, startTime, endTime time.Time) error
+	// Federate performs a query for a selection of queries in a time range.
+	Federate(ctx context.Context, matches []string, startTime, endTime time.Time) (model.Value, Warnings, error)
 	// Flags returns the flag values that Prometheus was launched with.
 	Flags(ctx context.Context) (FlagsResult, error)
 	// LabelNames returns the unique label names present in the block in sorted order by given time range and matchers.
@@ -1078,6 +1081,40 @@ func WithTimeout(timeout time.Duration) Option {
 	return func(o *apiOptions) {
 		o.timeout = timeout
 	}
+}
+
+func (h *httpAPI) Federate(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...Option) (model.Value, Warnings, error) {
+	u := h.client.URL(epFederate, nil)
+	q := u.Query()
+
+	for _, m := range matches {
+		q.Add("match[]", m)
+	}
+
+	opt := &apiOptions{}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	d := opt.timeout
+	if d > 0 {
+		q.Set("timeout", d.String())
+	}
+
+	if !startTime.IsZero() {
+		q.Set("start", formatTime(startTime))
+	}
+	if !endTime.IsZero() {
+		q.Set("end", formatTime(endTime))
+	}
+
+	_, body, warnings, err := h.client.DoGetFallback(ctx, u, q)
+	if err != nil {
+		return nil, warnings, err
+	}
+
+	var qres queryResult
+	return qres.v, warnings, json.Unmarshal(body, &qres)
 }
 
 func (h *httpAPI) Query(ctx context.Context, query string, ts time.Time, opts ...Option) (model.Value, Warnings, error) {
