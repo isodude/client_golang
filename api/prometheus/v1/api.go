@@ -362,6 +362,7 @@ const (
 
 	epAlerts          = apiPrefix + "/alerts"
 	epAlertManagers   = apiPrefix + "/alertmanagers"
+	epFederate        = apiPrefix + "/federate"
 	epQuery           = apiPrefix + "/query"
 	epQueryRange      = apiPrefix + "/query_range"
 	epQueryExemplars  = apiPrefix + "/query_exemplars"
@@ -1078,6 +1079,40 @@ func WithTimeout(timeout time.Duration) Option {
 	return func(o *apiOptions) {
 		o.timeout = timeout
 	}
+}
+
+func (h *httpAPI) Federate(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...Option) (model.Value, Warnings, error) {
+	u := h.client.URL(epFederate, nil)
+	q := u.Query()
+
+	for _, m := range matches {
+		q.Add("match[]", m)
+	}
+
+	opt := &apiOptions{}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	d := opt.timeout
+	if d > 0 {
+		q.Set("timeout", d.String())
+	}
+
+	if !startTime.IsZero() {
+		q.Set("start", formatTime(startTime))
+	}
+	if !endTime.IsZero() {
+		q.Set("end", formatTime(endTime))
+	}
+
+	_, body, warnings, err := h.client.DoGetFallback(ctx, u, q)
+	if err != nil {
+		return nil, warnings, err
+	}
+
+	var qres queryResult
+	return qres.v, warnings, json.Unmarshal(body, &qres)
 }
 
 func (h *httpAPI) Query(ctx context.Context, query string, ts time.Time, opts ...Option) (model.Value, Warnings, error) {
